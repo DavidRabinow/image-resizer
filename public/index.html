@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="dark light">
+  <title>Image Resizer · drop, paste, copy</title>
+  <link rel="stylesheet" href="/style.css">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect x='2' y='2' width='12' height='12' rx='2' fill='none' stroke='%235b8def' stroke-width='1.5'/%3E%3Cpath d='M5 9.5L7 7.5L9 9.5L11 6.5' stroke='%235b8def' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round' fill='none'/%3E%3C/svg%3E">
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Image Resizer</h1>
+      <p class="subtitle">
+        Drop, paste (<kbd>⌘V</kbd>), or click. Images with any side over
+        <strong id="subtitle-trigger">1950px</strong> are resized so the longest side is
+        <strong id="subtitle-target">1800px</strong>, then copied to your clipboard.
+      </p>
+    </header>
+
+    <div id="dropzone" class="dropzone" tabindex="0" role="button" aria-label="Drop image here, paste, or click to choose a file">
+      <div class="dropzone__inner">
+        <div class="dropzone__icon" aria-hidden="true">
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+            <polyline points="7 10 12 15 17 10"/>
+            <line x1="12" y1="15" x2="12" y2="3"/>
+          </svg>
+        </div>
+        <div class="dropzone__text">
+          <span class="dropzone__primary">Drop image, paste, or click</span>
+          <span class="dropzone__secondary">PNG · JPG · WebP · GIF</span>
+        </div>
+      </div>
+    </div>
+
+    <input id="filepicker" type="file" accept="image/*" multiple hidden>
+
+    <div id="status" class="status" aria-live="polite"></div>
+
+    <section id="history-wrap" class="history" hidden>
+      <h2 class="history__title">Recent</h2>
+      <div id="history" class="history__items"></div>
+    </section>
+
+    <footer class="footer">
+      <span>100% client-side · no upload · no storage</span>
+      <span class="footer__sep">·</span>
+      <a href="https://github.com/yawalkar/image-resizer-for-claude-code" target="_blank" rel="noopener">source</a>
+    </footer>
+  </main>
+
+  <script src="/script.js"></script>
+</body>
+</html>

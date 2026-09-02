@@ -1,0 +1,19 @@
+{
+  "name": "image-resizer",
+  "version": "1.0.0",
+  "description": "Tiny client-side tool that resizes oversized images and copies them to your clipboard — to stop losing AI chat sessions to the \"image too large\" error.",
+  "license": "MIT",
+  "keywords": [
+    "image-resize",
+    "clipboard",
+    "claude-code",
+    "screenshot",
+    "retina",
+    "cloudflare-workers",
+    "static-site"
+  ],
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy"
+  }
+}

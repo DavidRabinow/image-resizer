@@ -1,0 +1,5 @@
+name = "image-resizer"
+compatibility_date = "2025-01-15"
+
+[assets]
+directory = "./public"
