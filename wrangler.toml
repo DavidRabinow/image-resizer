@@ -3,3 +3,8 @@ compatibility_date = "2025-01-15"
 
 [assets]
 directory = "./public"
+
+# Custom domain — requires stuxtechnologies.com zone on your Cloudflare account.
+[[routes]]
+pattern = "image-resizer.stuxtechnologies.com"
+custom_domain = true

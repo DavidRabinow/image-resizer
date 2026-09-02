@@ -49,6 +49,43 @@ async function writeBlobToClipboard(blob) {
   }
 }
 
+const HEIC_EXT = /\.(heic|heif)$/i;
+const HEIC_MIME = /^image\/hei[cf](?:-sequence)?$/i;
+
+function isHeicExtension(name) {
+  return HEIC_EXT.test(name || '');
+}
+
+function isImageFile(file) {
+  if (!file) return false;
+  if (file.type.startsWith('image/')) return true;
+  return isHeicExtension(file.name);
+}
+
+async function isHeicFile(file) {
+  if (isHeicExtension(file.name)) return true;
+  if (HEIC_MIME.test(file.type || '')) return true;
+  if (typeof HeicTo?.isHeic === 'function') {
+    try { return await HeicTo.isHeic(file); } catch (_) { /* fall through */ }
+  }
+  return false;
+}
+
+async function convertHeicToJpeg(file) {
+  if (typeof HeicTo !== 'function') {
+    throw new Error('HEIC support failed to load. Refresh and try again.');
+  }
+  const converted = await HeicTo({ blob: file, type: 'image/jpeg', quality: 0.92 });
+  return converted instanceof Blob ? converted : converted[0];
+}
+
+async function normalizeToDecodableBlob(file) {
+  if (await isHeicFile(file)) {
+    return { blob: await convertHeicToJpeg(file), origSize: file.size, convertedFromHeic: true };
+  }
+  return { blob: file, origSize: file.size, convertedFromHeic: false };
+}
+
 async function decodeImage(blob) {
   if (typeof createImageBitmap === 'function') {
     try { return await createImageBitmap(blob); } catch (_) { /* fall through */ }
@@ -63,11 +100,12 @@ async function decodeImage(blob) {
 }
 
 async function resizeIfNeeded(file) {
-  if (!file.type.startsWith('image/')) {
+  if (!isImageFile(file)) {
     throw new Error(`Not an image (type: ${file.type || 'unknown'}).`);
   }
 
-  const bitmap = await decodeImage(file);
+  const { blob: inputBlob, origSize } = await normalizeToDecodableBlob(file);
+  const bitmap = await decodeImage(inputBlob);
   const origW  = bitmap.width;
   const origH  = bitmap.height;
 
@@ -79,7 +117,8 @@ async function resizeIfNeeded(file) {
 
   if (maxSide <= TRIGGER_SIZE) {
     // Pass through untouched. Avoids re-encoding cost and preserves bytes.
-    blob = file;
+    // HEIC/HEIF are already converted to JPEG above so clipboard/history stay compatible.
+    blob = inputBlob;
     newW = origW;
     newH = origH;
     resized = false;
@@ -100,7 +139,7 @@ async function resizeIfNeeded(file) {
 
   if (typeof bitmap.close === 'function') bitmap.close();
 
-  return { blob, origW, origH, newW, newH, resized, origSize: file.size };
+  return { blob, origW, origH, newW, newH, resized, origSize };
 }
 
 function clearStatus() { statusEl.innerHTML = ''; }
@@ -112,7 +151,7 @@ function renderStatus({ ok, title, detail, blob }) {
 
   const icon = document.createElement('span');
   icon.className = 'status__icon';
-  icon.textContent = ok ? '✓' : '⚠';
+  icon.textContent = ok ? '✓' : '!';
   row.appendChild(icon);
 
   const msgWrap = document.createElement('div');
@@ -136,7 +175,7 @@ function renderStatus({ ok, title, detail, blob }) {
     btn.textContent = 'Copy';
     btn.addEventListener('click', async () => {
       const res = await writeBlobToClipboard(blob);
-      btn.textContent = res.ok ? '✓ Copied' : 'Failed';
+      btn.textContent = res.ok ? 'Copied' : 'Failed';
       setTimeout(() => { btn.textContent = 'Copy'; }, 1200);
     });
     row.appendChild(btn);
@@ -178,7 +217,7 @@ function renderHistory() {
 
     const copied = document.createElement('div');
     copied.className = 'history__copied';
-    copied.textContent = '✓ Copied';
+    copied.textContent = 'Copied';
     item.appendChild(copied);
 
     item.addEventListener('click', async () => {
@@ -201,20 +240,20 @@ async function processFile(file) {
 
     const detail = result.resized
       ? `${result.origW}×${result.origH} → ${result.newW}×${result.newH}  ·  ${fmtBytes(result.origSize)} → ${fmtBytes(result.blob.size)}`
-      : `${result.origW}×${result.origH}  ·  ${fmtBytes(result.blob.size)} (both sides ≤ ${TRIGGER_SIZE}px — passed through)`;
+      : `${result.origW}×${result.origH}  ·  ${fmtBytes(result.blob.size)} (within ${TRIGGER_SIZE}px limit)`;
 
     if (writeRes.ok) {
       renderStatus({
         ok: true,
-        title: result.resized ? 'Resized & copied — ⌘V to paste' : 'Copied — ⌘V to paste',
+        title: result.resized ? 'Resized and copied to clipboard' : 'Copied to clipboard',
         detail,
         blob: result.blob,
       });
     } else {
       renderStatus({
         ok: false,
-        title: 'Resized, but clipboard write was blocked',
-        detail: `${detail}  ·  ${writeRes.reason} Click Copy to retry.`,
+        title: result.resized ? 'Resize complete — clipboard unavailable' : 'Ready — clipboard unavailable',
+        detail: `${detail}  ·  ${writeRes.reason} Use Copy to retry.`,
         blob: result.blob,
       });
     }
@@ -237,7 +276,7 @@ async function processFile(file) {
 async function processFiles(files) {
   // Serial so the LAST processed image lands on the clipboard.
   for (const f of files) {
-    if (!f || !f.type.startsWith('image/')) continue;
+    if (!isImageFile(f)) continue;
     await processFile(f);
   }
 }
@@ -261,12 +300,12 @@ dropzone.addEventListener('drop', async (e) => {
   e.stopPropagation();
   dropzone.classList.remove('dropzone--drag');
 
-  const files = Array.from(e.dataTransfer?.files || []);
+  const files = Array.from(e.dataTransfer?.files || []).filter(isImageFile);
   if (files.length === 0) {
     renderStatus({
       ok: false,
-      title: 'No image detected in drop',
-      detail: 'Try dropping the file again, or use ⌘V to paste from clipboard.',
+      title: 'No image in drop',
+      detail: 'Drop an image file or paste from clipboard.',
     });
     return;
   }
@@ -295,9 +334,9 @@ filepicker.addEventListener('change', async (e) => {
 window.addEventListener('paste', async (e) => {
   const items = Array.from(e.clipboardData?.items || []);
   const files = items
-    .filter(it => it.kind === 'file' && it.type.startsWith('image/'))
+    .filter(it => it.kind === 'file')
     .map(it => it.getAsFile())
-    .filter(Boolean);
+    .filter(isImageFile);
   if (files.length > 0) {
     e.preventDefault();
     await processFiles(files);
