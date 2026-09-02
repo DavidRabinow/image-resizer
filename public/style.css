@@ -16,7 +16,7 @@
   --error-soft: #fdf2f2;
   --radius: 6px;
   --radius-sm: 4px;
-  --topbar-h: 56px;
+  --topbar-h: 68px;
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", system-ui, sans-serif;
   font-feature-settings: "ss01", "cv11";
   -webkit-font-smoothing: antialiased;
@@ -45,34 +45,73 @@ body {
   z-index: 100;
   background: var(--surface);
   border-bottom: 1px solid var(--border);
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.03);
   height: var(--topbar-h);
 }
 .topbar__inner {
-  max-width: 960px;
+  max-width: 1040px;
   margin: 0 auto;
   height: 100%;
-  padding: 0 24px;
+  padding: 0 28px;
   display: flex;
   align-items: center;
-  gap: 16px;
+  gap: 20px;
 }
 .topbar__brand {
   display: flex;
   align-items: center;
+  gap: 14px;
   flex-shrink: 0;
   text-decoration: none;
+  color: inherit;
+  padding: 6px 10px 6px 0;
+  margin: 0 -10px 0 0;
+  border-radius: var(--radius-sm);
+  transition: opacity 140ms ease;
+}
+.topbar__brand:hover {
+  opacity: 0.72;
+}
+.topbar__brand:hover .topbar__company-url {
+  text-decoration: underline;
+  text-underline-offset: 2px;
 }
 .topbar__logo {
   display: block;
-  height: 22px;
+  height: 36px;
   width: auto;
   object-fit: contain;
+  flex-shrink: 0;
+}
+.topbar__brand-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  line-height: 1.2;
+}
+.topbar__company {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  letter-spacing: -0.02em;
+}
+.topbar__company-url {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-tertiary);
+  letter-spacing: 0.01em;
 }
 .topbar__divider {
   width: 1px;
-  height: 20px;
+  height: 32px;
   background: var(--border);
   flex-shrink: 0;
+}
+.topbar__product-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  line-height: 1.2;
 }
 .topbar__product {
   font-size: 13px;
@@ -82,7 +121,7 @@ body {
   white-space: nowrap;
 }
 .topbar__domain {
-  font-size: 12px;
+  font-size: 11px;
   color: var(--text-tertiary);
   letter-spacing: 0.01em;
   white-space: nowrap;
@@ -93,7 +132,7 @@ body {
   height: 13px;
   width: auto;
   object-fit: contain;
-  opacity: 0.55;
+  opacity: 0.5;
   flex-shrink: 0;
 }
 
@@ -148,18 +187,62 @@ kbd {
   vertical-align: 1px;
 }
 
-/* ── Session stats ── */
+/* ── Usage stats ── */
 .stats {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 8px;
-  margin-bottom: 20px;
-}
-.stats__item {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
-  padding: 12px 10px;
+  padding: 14px 16px;
+  margin-bottom: 20px;
+}
+.stats__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+.stats__title {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  margin: 0;
+}
+.stats__live {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--success);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+.stats__live::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--success);
+  animation: pulse 2s ease infinite;
+}
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.35; }
+}
+
+/* ── Progress ── */
+.stats__grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+.stats__item {
+  background: var(--surface-muted);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 8px;
   text-align: center;
 }
 .stats__value {
@@ -177,6 +260,19 @@ kbd {
   text-transform: uppercase;
   letter-spacing: 0.06em;
   margin-top: 3px;
+}
+.stats__detail {
+  font-size: 11px;
+  color: var(--text-tertiary);
+  margin: 10px 0 0;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.45;
+}
+.stats__session {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin: 4px 0 0;
+  font-variant-numeric: tabular-nums;
 }
 
 /* ── Progress ── */
@@ -478,8 +574,10 @@ kbd {
 .footer a:hover { color: var(--text); }
 
 @media (max-width: 600px) {
+  .topbar__brand-text { display: none; }
   .topbar__domain { display: none; }
   .topbar__inner { padding: 0 16px; gap: 12px; }
+  .topbar__logo { height: 28px; }
   .page { padding: 32px 16px 48px; }
   .history__items { grid-template-columns: 1fr 1fr; }
   .dropzone { padding: 44px 16px; }

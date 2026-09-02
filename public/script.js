@@ -1,5 +1,5 @@
 const HISTORY_LIMIT = 5;
-const STATS_KEY = 'stux-resizer-stats';
+const STATS_POLL_MS = 15000;
 
 const DEFAULT_TRIGGER = 1950;
 const DEFAULT_TARGET  = 1800;
@@ -29,6 +29,9 @@ const progressDetail = document.getElementById('progress-detail');
 const statProcessed  = document.getElementById('stat-processed');
 const statResized    = document.getElementById('stat-resized');
 const statSaved      = document.getElementById('stat-saved');
+const statDetail     = document.getElementById('stat-detail');
+const statSession    = document.getElementById('stat-session');
+const statLive       = document.getElementById('stat-live');
 
 const subtitleTrigger = document.getElementById('subtitle-trigger');
 const subtitleTarget  = document.getElementById('subtitle-target');
@@ -36,7 +39,8 @@ if (subtitleTrigger) subtitleTrigger.textContent = TRIGGER_SIZE + 'px';
 if (subtitleTarget)  subtitleTarget.textContent  = TARGET_SIZE  + 'px';
 
 const history = [];
-let sessionStats = loadStats();
+let globalStats = defaultStats();
+const sessionStats = defaultStats();
 
 // ── PDF.js (ES module) ──
 import * as pdfjsLib from '/vendor/pdf.min.mjs';
@@ -45,39 +49,116 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = '/vendor/pdf.worker.min.mjs';
 // ── Helpers ──
 
 function defaultStats() {
-  return { processed: 0, resized: 0, bytesSaved: 0, images: 0, pdfs: 0, docxs: 0 };
+  return {
+    processed: 0,
+    resized: 0,
+    bytesIn: 0,
+    bytesOut: 0,
+    images: 0,
+    pdfs: 0,
+    docxs: 0,
+    updatedAt: null,
+  };
 }
 
-function loadStats() {
-  try {
-    const raw = sessionStorage.getItem(STATS_KEY);
-    return raw ? { ...defaultStats(), ...JSON.parse(raw) } : defaultStats();
-  } catch {
-    return defaultStats();
-  }
+function bytesSaved(stats) {
+  return Math.max(0, stats.bytesIn - stats.bytesOut);
 }
 
-function saveStats() {
-  sessionStorage.setItem(STATS_KEY, JSON.stringify(sessionStats));
-  renderStats();
+function formatTypeBreakdown(stats) {
+  const parts = [];
+  if (stats.images) parts.push(`${stats.images} image${stats.images === 1 ? '' : 's'}`);
+  if (stats.pdfs)   parts.push(`${stats.pdfs} PDF${stats.pdfs === 1 ? '' : 's'}`);
+  if (stats.docxs)  parts.push(`${stats.docxs} DOCX`);
+  return parts.length ? parts.join(' · ') : null;
 }
 
 function renderStats() {
-  if (statProcessed) statProcessed.textContent = String(sessionStats.processed);
-  if (statResized)   statResized.textContent   = String(sessionStats.resized);
-  if (statSaved)     statSaved.textContent     = fmtBytes(Math.max(0, sessionStats.bytesSaved));
+  const saved = bytesSaved(globalStats);
+  if (statProcessed) statProcessed.textContent = String(globalStats.processed);
+  if (statResized)   statResized.textContent   = String(globalStats.resized);
+  if (statSaved)     statSaved.textContent     = fmtBytes(saved);
+
+  if (statDetail) {
+    if (globalStats.processed === 0) {
+      statDetail.textContent = 'Shared across all users — only counts and bytes, never file contents.';
+    } else {
+      const types = formatTypeBreakdown(globalStats);
+      const inOut = `${fmtBytes(globalStats.bytesIn)} in → ${fmtBytes(globalStats.bytesOut)} out`;
+      statDetail.textContent = types ? `${types} · ${inOut}` : inOut;
+    }
+  }
+
+  if (statSession) {
+    if (sessionStats.processed === 0) {
+      statSession.textContent = '';
+    } else {
+      const sessSaved = bytesSaved(sessionStats);
+      statSession.textContent = `Your visit: ${sessionStats.processed} file${sessionStats.processed === 1 ? '' : 's'}`
+        + (sessSaved > 0 ? ` · ${fmtBytes(sessSaved)} saved` : '');
+    }
+  }
 }
 
-function recordStats(result) {
+async function fetchGlobalStats() {
+  const res = await fetch('/api/stats', { cache: 'no-store' });
+  if (!res.ok) throw new Error(`Stats unavailable (${res.status})`);
+  return { ...defaultStats(), ...await res.json() };
+}
+
+async function refreshGlobalStats() {
+  try {
+    globalStats = await fetchGlobalStats();
+    if (statLive) statLive.hidden = false;
+    renderStats();
+  } catch {
+    if (statDetail) statDetail.textContent = 'Could not load community totals.';
+    if (statLive) statLive.hidden = true;
+  }
+}
+
+async function reportStats(result) {
+  const res = await fetch('/api/stats', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      origSize: result.origSize,
+      outSize: result.blob.size,
+      optimized: !!(result.changed || result.resized || result.optimized),
+      kind: result.kind,
+    }),
+  });
+  if (!res.ok) throw new Error(`Stats report failed (${res.status})`);
+  globalStats = { ...defaultStats(), ...await res.json() };
+  renderStats();
+}
+
+async function recordStats(result) {
+  const now = Date.now();
   sessionStats.processed += 1;
   if (result.resized) sessionStats.resized += 1;
-  if (result.origSize > result.blob.size) {
-    sessionStats.bytesSaved += result.origSize - result.blob.size;
-  }
+  sessionStats.bytesIn  += result.origSize;
+  sessionStats.bytesOut += result.blob.size;
   if (result.kind === 'image') sessionStats.images += 1;
   if (result.kind === 'pdf')   sessionStats.pdfs   += 1;
   if (result.kind === 'docx')  sessionStats.docxs  += 1;
-  saveStats();
+  if (!sessionStats.firstUsed) sessionStats.firstUsed = now;
+  sessionStats.lastUsed = now;
+  renderStats();
+
+  try {
+    await reportStats(result);
+    if (statLive) statLive.hidden = false;
+  } catch {
+    await refreshGlobalStats();
+  }
+}
+
+function startStatsPolling() {
+  refreshGlobalStats();
+  setInterval(() => {
+    if (document.visibilityState === 'visible') refreshGlobalStats();
+  }, STATS_POLL_MS);
 }
 
 function fmtBytes(bytes) {
@@ -216,19 +297,29 @@ async function decodeImage(blob) {
   });
 }
 
-async function resizeBitmap(bitmap, onProgress) {
+const JPEG_QUALITY = 0.88;
+
+async function encodeCanvasSmallest(canvas) {
+  const jpeg = await new Promise(r => canvas.toBlob(r, 'image/jpeg', JPEG_QUALITY));
+  const png  = await new Promise(r => canvas.toBlob(r, 'image/png'));
+  const candidates = [jpeg, png].filter(Boolean);
+  if (!candidates.length) return null;
+  return candidates.reduce((a, b) => (a.size <= b.size ? a : b));
+}
+
+async function processImageBitmap(bitmap, onProgress) {
   const origW = bitmap.width;
   const origH = bitmap.height;
   const maxSide = Math.max(origW, origH);
+  const dimensionResized = maxSide > TRIGGER_SIZE;
+  const newW = dimensionResized ? Math.round(origW * TARGET_SIZE / maxSide) : origW;
+  const newH = dimensionResized ? Math.round(origH * TARGET_SIZE / maxSide) : origH;
 
-  if (maxSide <= TRIGGER_SIZE) {
-    return { origW, origH, newW: origW, newH: origH, resized: false, bitmap };
-  }
+  onProgress?.(
+    dimensionResized ? 0.7 : 0.75,
+    dimensionResized ? `Scaling ${origW}×${origH}…` : 'Optimizing…',
+  );
 
-  onProgress?.(0.7, `Scaling ${origW}×${origH} → target ${TARGET_SIZE}px…`);
-  const ratio = TARGET_SIZE / maxSide;
-  const newW = Math.round(origW * ratio);
-  const newH = Math.round(origH * ratio);
   const canvas = document.createElement('canvas');
   canvas.width = newW;
   canvas.height = newH;
@@ -238,8 +329,28 @@ async function resizeBitmap(bitmap, onProgress) {
   ctx.drawImage(bitmap, 0, 0, newW, newH);
   if (typeof bitmap.close === 'function') bitmap.close();
 
-  const blob = await new Promise(r => canvas.toBlob(r, 'image/png'));
-  return { origW, origH, newW, newH, resized: true, blob };
+  const blob = await encodeCanvasSmallest(canvas);
+  if (!blob) throw new Error('Could not encode image.');
+  return { origW, origH, newW, newH, dimensionResized, blob };
+}
+
+function pickSmallerBlob(inputBlob, candidate, dimensionResized) {
+  if (dimensionResized) return candidate;
+  return candidate.size < inputBlob.size ? candidate : inputBlob;
+}
+
+function describeImageResult(origSize, blob, dims, dimensionResized, optimized) {
+  const sizePart = `${fmtBytes(origSize)} → ${fmtBytes(blob.size)}`;
+  if (dimensionResized && optimized) {
+    return `${dims.origW}×${dims.origH} → ${dims.newW}×${dims.newH} · ${sizePart}`;
+  }
+  if (dimensionResized) {
+    return `${dims.origW}×${dims.origH} → ${dims.newW}×${dims.newH} · ${sizePart}`;
+  }
+  if (optimized) {
+    return `${dims.origW}×${dims.origH} · ${sizePart}`;
+  }
+  return `${dims.origW}×${dims.origH} · ${fmtBytes(blob.size)} (already optimal)`;
 }
 
 async function canvasToJpegBytes(canvas, quality = 0.85) {
@@ -252,32 +363,25 @@ async function resizeImageFile(file, onProgress) {
   const { blob: inputBlob, origSize } = await normalizeToDecodableBlob(file, onProgress);
   onProgress(0.25, 'Decoding image…');
   const bitmap = await decodeImage(inputBlob);
-  const result = await resizeBitmap(bitmap, onProgress);
-
-  let blob;
-  if (result.resized) {
-    blob = result.blob;
-  } else {
-    blob = inputBlob;
-    if (typeof bitmap.close === 'function') bitmap.close();
-  }
+  const processed = await processImageBitmap(bitmap, onProgress);
+  const blob = pickSmallerBlob(inputBlob, processed.blob, processed.dimensionResized);
+  const optimized = blob.size < inputBlob.size && !processed.dimensionResized;
+  const changed = processed.dimensionResized || optimized;
 
   onProgress(0.95, 'Done.');
-  const detail = result.resized
-    ? `${result.origW}×${result.origH} → ${result.newW}×${result.newH} · ${fmtBytes(origSize)} → ${fmtBytes(blob.size)}`
-    : `${result.origW}×${result.origH} · ${fmtBytes(blob.size)} (within ${TRIGGER_SIZE}px limit)`;
-
   return {
     kind: 'image',
     blob,
     origSize,
-    resized: result.resized,
+    resized: processed.dimensionResized,
+    optimized,
+    changed,
     filename: file.name,
-    origW: result.origW,
-    origH: result.origH,
-    newW: result.newW,
-    newH: result.newH,
-    detail,
+    origW: processed.origW,
+    origH: processed.origH,
+    newW: processed.newW,
+    newH: processed.newH,
+    detail: describeImageResult(origSize, blob, processed, processed.dimensionResized, optimized),
   };
 }
 
@@ -285,12 +389,16 @@ async function resizeImageBlob(blob, path) {
   const file = new File([blob], path.split('/').pop(), { type: blob.type || 'application/octet-stream' });
   const { blob: inputBlob } = await normalizeToDecodableBlob(file);
   const bitmap = await decodeImage(inputBlob);
-  const result = await resizeBitmap(bitmap);
-  if (result.resized) {
-    return { ...result, blob: result.blob };
-  }
-  if (typeof bitmap.close === 'function') bitmap.close();
-  return { ...result, blob: inputBlob };
+  const processed = await processImageBitmap(bitmap);
+  const out = pickSmallerBlob(inputBlob, processed.blob, processed.dimensionResized);
+  const optimized = out.size < inputBlob.size && !processed.dimensionResized;
+  return {
+    ...processed,
+    blob: out,
+    resized: processed.dimensionResized,
+    optimized,
+    changed: processed.dimensionResized || optimized,
+  };
 }
 
 // ── PDF processing ──
@@ -302,64 +410,49 @@ async function resizePdfFile(file, onProgress) {
   const numPages = pdf.numPages;
   const { PDFDocument } = PDFLib;
 
-  let anyResized = false;
-  const pageMeta = [];
+  onProgress(0.2, 'Compressing pages…');
+  const outPdf = await PDFDocument.create();
+  let pagesChanged = 0;
 
   for (let i = 1; i <= numPages; i++) {
     const page = await pdf.getPage(i);
     const viewport = page.getViewport({ scale: 1 });
     const maxSide = Math.max(viewport.width, viewport.height);
-    const needsResize = maxSide > TRIGGER_SIZE;
-    if (needsResize) anyResized = true;
-    pageMeta.push({ page, viewport, maxSide, needsResize });
-    onProgress(0.05 + 0.15 * (i / numPages), `Analyzing page ${i} of ${numPages}…`);
-  }
-
-  if (!anyResized) {
-    onProgress(0.95, 'No pages need resizing.');
-    return {
-      kind: 'pdf',
-      blob: file,
-      origSize: file.size,
-      resized: false,
-      filename: file.name,
-      pages: numPages,
-      detail: `${numPages} page${numPages === 1 ? '' : 's'} · ${fmtBytes(file.size)} (all within ${TRIGGER_SIZE}px limit)`,
-    };
-  }
-
-  onProgress(0.22, 'Rendering and compressing pages…');
-  const outPdf = await PDFDocument.create();
-
-  for (let i = 0; i < pageMeta.length; i++) {
-    const { page, viewport, maxSide, needsResize } = pageMeta[i];
-    const scale = needsResize ? TARGET_SIZE / maxSide : 1;
+    const scale = maxSide > TRIGGER_SIZE ? TARGET_SIZE / maxSide : 1;
     const scaled = page.getViewport({ scale });
-    onProgress(0.22 + 0.7 * ((i + 1) / numPages), `Processing page ${i + 1} of ${numPages}…`);
+    onProgress(0.2 + 0.7 * (i / numPages), `Processing page ${i} of ${numPages}…`);
 
     const canvas = document.createElement('canvas');
     canvas.width = Math.round(scaled.width);
     canvas.height = Math.round(scaled.height);
     await page.render({ canvasContext: canvas.getContext('2d'), viewport: scaled }).promise;
 
-    const jpegBytes = await canvasToJpegBytes(canvas, 0.88);
+    const jpegBytes = await canvasToJpegBytes(canvas, JPEG_QUALITY);
     const embedded = await outPdf.embedJpg(jpegBytes);
     const outPage = outPdf.addPage([canvas.width, canvas.height]);
     outPage.drawImage(embedded, { x: 0, y: 0, width: canvas.width, height: canvas.height });
+    if (scale < 1) pagesChanged += 1;
   }
 
   onProgress(0.96, 'Building PDF…');
   const bytes = await outPdf.save();
-  const blob = new Blob([bytes], { type: 'application/pdf' });
+  const outBlob = new Blob([bytes], { type: 'application/pdf' });
+  const optimized = outBlob.size < file.size;
+  const blob = optimized ? outBlob : file;
+  const changed = optimized || pagesChanged > 0;
 
   return {
     kind: 'pdf',
     blob,
     origSize: file.size,
-    resized: true,
+    resized: pagesChanged > 0,
+    optimized: optimized && pagesChanged === 0,
+    changed,
     filename: file.name,
     pages: numPages,
-    detail: `${numPages} page${numPages === 1 ? '' : 's'} resized · ${fmtBytes(file.size)} → ${fmtBytes(blob.size)}`,
+    detail: changed
+      ? `${numPages} page${numPages === 1 ? '' : 's'} · ${fmtBytes(file.size)} → ${fmtBytes(blob.size)}`
+      : `${numPages} page${numPages === 1 ? '' : 's'} · ${fmtBytes(file.size)} (already optimal)`,
   };
 }
 
@@ -383,43 +476,37 @@ async function resizeDocxFile(file, onProgress) {
     };
   }
 
-  let imagesResized = 0;
+  let imagesChanged = 0;
   for (let i = 0; i < mediaPaths.length; i++) {
     const path = mediaPaths[i];
     onProgress(0.1 + 0.75 * (i / mediaPaths.length), `Image ${i + 1} of ${mediaPaths.length}…`);
     const data = await zip.file(path).async('blob');
     const result = await resizeImageBlob(data, path);
-    if (result.resized) {
+    if (result.changed && result.blob.size <= data.size) {
       zip.file(path, result.blob);
-      imagesResized += 1;
+      imagesChanged += 1;
     }
-  }
-
-  if (imagesResized === 0) {
-    onProgress(0.95, 'No images needed resizing.');
-    return {
-      kind: 'docx',
-      blob: file,
-      origSize: file.size,
-      resized: false,
-      filename: file.name,
-      imagesProcessed: mediaPaths.length,
-      detail: `${mediaPaths.length} image${mediaPaths.length === 1 ? '' : 's'} · ${fmtBytes(file.size)} (all within ${TRIGGER_SIZE}px limit)`,
-    };
   }
 
   onProgress(0.92, 'Repacking document…');
   const outBlob = await zip.generateAsync({ type: 'blob', compression: 'DEFLATE', compressionOptions: { level: 6 } });
+  const optimized = outBlob.size < file.size;
+  const blob = optimized ? outBlob : file;
+  const changed = optimized || imagesChanged > 0;
 
   return {
     kind: 'docx',
-    blob: outBlob,
+    blob,
     origSize: file.size,
-    resized: true,
+    resized: imagesChanged > 0,
+    optimized: optimized && imagesChanged === 0,
+    changed,
     filename: file.name,
     imagesProcessed: mediaPaths.length,
-    imagesResized,
-    detail: `${imagesResized} of ${mediaPaths.length} images resized · ${fmtBytes(file.size)} → ${fmtBytes(outBlob.size)}`,
+    imagesChanged,
+    detail: changed
+      ? `${imagesChanged} of ${mediaPaths.length} images optimized · ${fmtBytes(file.size)} → ${fmtBytes(blob.size)}`
+      : `${mediaPaths.length} image${mediaPaths.length === 1 ? '' : 's'} · ${fmtBytes(file.size)} (already optimal)`,
   };
 }
 
@@ -437,9 +524,9 @@ function renderResult(result) {
 
   const titleEl = document.createElement('span');
   titleEl.className = 'status__title';
-  titleEl.textContent = result.resized
-    ? `${kindLabel(result.kind)} resized — not copied yet`
-    : `${kindLabel(result.kind)} ready — no resize needed`;
+  titleEl.textContent = result.changed
+    ? `${kindLabel(result.kind)} optimized — not copied yet`
+    : `${kindLabel(result.kind)} ready — already optimal`;
   msgWrap.appendChild(titleEl);
 
   const detailEl = document.createElement('span');
@@ -481,7 +568,7 @@ function renderResult(result) {
   dlBtn.type = 'button';
   dlBtn.textContent = 'Download';
   dlBtn.addEventListener('click', () => {
-    downloadBlob(result.blob, outputFilename(result.filename, result.resized));
+    downloadBlob(result.blob, outputFilename(result.filename, result.changed));
     dlBtn.textContent = 'Downloaded';
     setTimeout(() => { dlBtn.textContent = 'Download'; }, 1500);
   });
@@ -544,7 +631,7 @@ function renderHistory() {
 
     const meta = document.createElement('div');
     meta.className = 'history__meta';
-    meta.textContent = h.resized
+    meta.textContent = h.changed
       ? `${h.detail.split('·')[0].trim()} · ${fmtBytes(h.blob.size)}`
       : fmtBytes(h.blob.size);
     item.appendChild(meta);
@@ -672,4 +759,4 @@ window.addEventListener('paste', async (e) => {
   }
 });
 
-renderStats();
+startStatsPolling();

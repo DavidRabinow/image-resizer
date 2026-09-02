@@ -1,9 +1,15 @@
 name = "image-resizer"
+main = "src/worker.js"
 compatibility_date = "2025-01-15"
 workers_dev = false
 
 [assets]
 directory = "./public"
+binding = "ASSETS"
+
+[[kv_namespaces]]
+binding = "STATS"
+id = "10bba48a2825454fb98e3abaeb23b6f8"
 
 [[routes]]
 pattern = "image-resizer.stuxtechnologies.com"

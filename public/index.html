@@ -18,12 +18,18 @@
 <body>
   <header class="topbar">
     <div class="topbar__inner">
-      <a href="https://stuxtechnologies.com" class="topbar__brand" target="_blank" rel="noopener">
-        <img src="/images/stux-logo.png" alt="Stux Technologies" class="topbar__logo" width="120" height="22">
+      <a href="https://stuxtechnologies.com" class="topbar__brand" target="_blank" rel="noopener" title="Stux Technologies">
+        <img src="/images/stux-logo.png" alt="" class="topbar__logo" width="180" height="36">
+        <span class="topbar__brand-text">
+          <span class="topbar__company">Stux Technologies</span>
+          <span class="topbar__company-url">stuxtechnologies.com</span>
+        </span>
       </a>
       <span class="topbar__divider" aria-hidden="true"></span>
-      <span class="topbar__product">Image Resizer</span>
-      <span class="topbar__domain">image-resizer.stuxtechnologies.com</span>
+      <div class="topbar__product-wrap">
+        <span class="topbar__product">Image Resizer</span>
+        <span class="topbar__domain">image-resizer.stuxtechnologies.com</span>
+      </div>
       <span class="topbar__spacer" aria-hidden="true"></span>
       <img src="/images/anthropic-logo.svg" alt="Anthropic" class="topbar__partner" width="100" height="13">
     </div>
@@ -34,25 +40,33 @@
       <header class="page-header">
         <h1>Resize files for AI chat</h1>
         <p class="subtitle">
-          Drop, paste (<kbd>⌘V</kbd>), or select a file. Oversized images are scaled so the longest edge is
-          <strong id="subtitle-target">1800px</strong> (trigger: <strong id="subtitle-trigger">1950px</strong>).
-          PDF pages and DOCX embedded images use the same limits. Nothing is copied automatically — you choose when to copy or download.
+          Drop, paste (<kbd>⌘V</kbd>), or select a file. Every file is optimized for AI upload — oversized sides scaled to
+          <strong id="subtitle-target">1800px</strong>, and everything else compressed when it saves space.
+          Nothing is copied automatically — you choose when to copy or download.
         </p>
       </header>
 
-      <section class="stats" aria-label="Session statistics">
-        <div class="stats__item">
-          <span class="stats__value" id="stat-processed">0</span>
-          <span class="stats__label">Processed</span>
+      <section class="stats" aria-label="Community usage statistics">
+        <div class="stats__head">
+          <h2 class="stats__title">Community savings</h2>
+          <span class="stats__live" id="stat-live" hidden>Live</span>
         </div>
-        <div class="stats__item">
-          <span class="stats__value" id="stat-resized">0</span>
-          <span class="stats__label">Resized</span>
+        <div class="stats__grid">
+          <div class="stats__item">
+            <span class="stats__value" id="stat-processed">—</span>
+            <span class="stats__label">Files processed</span>
+          </div>
+          <div class="stats__item">
+            <span class="stats__value" id="stat-resized">—</span>
+            <span class="stats__label">Optimized</span>
+          </div>
+          <div class="stats__item">
+            <span class="stats__value" id="stat-saved">—</span>
+            <span class="stats__label">Data saved</span>
+          </div>
         </div>
-        <div class="stats__item">
-          <span class="stats__value" id="stat-saved">0 B</span>
-          <span class="stats__label">Saved</span>
-        </div>
+        <p class="stats__detail" id="stat-detail">Loading community totals…</p>
+        <p class="stats__session" id="stat-session"></p>
       </section>
 
       <div id="dropzone" class="dropzone" tabindex="0" role="button" aria-label="Drop a file here, paste, or click to choose">
