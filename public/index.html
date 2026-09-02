@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="color-scheme" content="light">
-  <meta name="description" content="Client-side image resizing for AI workflows. No upload, no storage.">
+  <meta name="description" content="Client-side image, PDF, and document resizing for AI workflows. No upload, no storage.">
   <title>Image Resizer · Stux Technologies</title>
   <link rel="stylesheet" href="/style.css">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect x='2' y='2' width='12' height='12' rx='1' fill='none' stroke='%23141414' stroke-width='1.25'/%3E%3Cpath d='M5 10L7.5 7.5L10 10L12 7' stroke='%23141414' stroke-width='1.25' stroke-linecap='round' stroke-linejoin='round' fill='none'/%3E%3C/svg%3E">
@@ -26,15 +26,30 @@
   <div class="page">
     <main>
       <header class="page-header">
-        <h1>Resize images for AI chat</h1>
+        <h1>Resize files for AI chat</h1>
         <p class="subtitle">
-          Drop, paste (<kbd>⌘V</kbd>), or select a file. Any side over
-          <strong id="subtitle-trigger">1950px</strong> is scaled so the longest edge is
-          <strong id="subtitle-target">1800px</strong>, then placed on your clipboard.
+          Drop, paste (<kbd>⌘V</kbd>), or select a file. Oversized images are scaled so the longest edge is
+          <strong id="subtitle-target">1800px</strong> (trigger: <strong id="subtitle-trigger">1950px</strong>).
+          PDF pages and DOCX embedded images use the same limits. Nothing is copied automatically — you choose when to copy or download.
         </p>
       </header>
 
-      <div id="dropzone" class="dropzone" tabindex="0" role="button" aria-label="Drop image here, paste, or click to choose a file">
+      <section class="stats" aria-label="Session statistics">
+        <div class="stats__item">
+          <span class="stats__value" id="stat-processed">0</span>
+          <span class="stats__label">Processed</span>
+        </div>
+        <div class="stats__item">
+          <span class="stats__value" id="stat-resized">0</span>
+          <span class="stats__label">Resized</span>
+        </div>
+        <div class="stats__item">
+          <span class="stats__value" id="stat-saved">0 B</span>
+          <span class="stats__label">Saved</span>
+        </div>
+      </section>
+
+      <div id="dropzone" class="dropzone" tabindex="0" role="button" aria-label="Drop a file here, paste, or click to choose">
         <div class="dropzone__inner">
           <div class="dropzone__icon" aria-hidden="true">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
@@ -45,12 +60,19 @@
           </div>
           <div class="dropzone__text">
             <span class="dropzone__primary">Drop, paste, or browse</span>
-            <span class="dropzone__secondary">PNG · JPG · WebP · GIF · HEIC · HEIF</span>
+            <span class="dropzone__secondary">PNG · JPG · WebP · GIF · HEIC · PDF · DOCX</span>
           </div>
         </div>
       </div>
 
-      <input id="filepicker" type="file" accept="image/*,.heic,.heif,image/heic,image/heif" multiple hidden>
+      <input id="filepicker" type="file" accept="image/*,.heic,.heif,.pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" multiple hidden>
+
+      <div id="progress-wrap" class="progress" hidden>
+        <div class="progress__track" aria-hidden="true">
+          <div id="progress-fill" class="progress__fill"></div>
+        </div>
+        <p id="progress-detail" class="progress__detail">Processing…</p>
+      </div>
 
       <div id="status" class="status" aria-live="polite"></div>
 
@@ -67,6 +89,8 @@
   </div>
 
   <script src="/vendor/heic-to.js"></script>
-  <script src="/script.js"></script>
+  <script src="/vendor/jszip.min.js"></script>
+  <script src="/vendor/pdf-lib.min.js"></script>
+  <script type="module" src="/script.js"></script>
 </body>
 </html>

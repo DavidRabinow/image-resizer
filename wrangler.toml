@@ -1,10 +1,11 @@
 name = "image-resizer"
 compatibility_date = "2025-01-15"
+workers_dev = true
 
 [assets]
 directory = "./public"
 
-# Custom domain — requires stuxtechnologies.com zone on your Cloudflare account.
+# Custom domain — requires stuxtechnologies.com on the signed-in Cloudflare account.
 [[routes]]
 pattern = "image-resizer.stuxtechnologies.com"
 custom_domain = true

@@ -13,7 +13,7 @@
     "static-site"
   ],
   "scripts": {
-    "vendor": "mkdir -p public/vendor && cp node_modules/heic-to/dist/iife/heic-to.js public/vendor/heic-to.js",
+    "vendor": "mkdir -p public/vendor && cp node_modules/heic-to/dist/iife/heic-to.js public/vendor/heic-to.js && cp node_modules/jszip/dist/jszip.min.js public/vendor/jszip.min.js && cp node_modules/pdf-lib/dist/pdf-lib.min.js public/vendor/pdf-lib.min.js && cp node_modules/pdfjs-dist/legacy/build/pdf.min.mjs public/vendor/pdf.min.mjs && cp node_modules/pdfjs-dist/legacy/build/pdf.worker.min.mjs public/vendor/pdf.worker.min.mjs",
     "postinstall": "npm run vendor",
     "dev": "wrangler dev",
     "deploy": "npm run vendor && wrangler deploy"
@@ -22,6 +22,9 @@
     "wrangler": "^4.128.0"
   },
   "dependencies": {
-    "heic-to": "^1.5.2"
+    "heic-to": "^1.5.2",
+    "jszip": "^3.10.1",
+    "pdf-lib": "^1.17.1",
+    "pdfjs-dist": "^6.3.289"
   }
 }

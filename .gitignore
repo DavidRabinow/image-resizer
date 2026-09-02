@@ -3,3 +3,7 @@ node_modules/
 .dev.vars
 .DS_Store
 public/vendor/heic-to.js
+public/vendor/jszip.min.js
+public/vendor/pdf-lib.min.js
+public/vendor/pdf.min.mjs
+public/vendor/pdf.worker.min.mjs
