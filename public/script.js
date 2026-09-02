@@ -1,5 +1,6 @@
 const HISTORY_LIMIT = 5;
 const STATS_POLL_MS = 15000;
+const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 
 const DEFAULT_TRIGGER = 1950;
 const DEFAULT_TARGET  = 1800;
@@ -173,12 +174,207 @@ function kindLabel(kind) {
   return 'Image';
 }
 
-function outputFilename(name, resized) {
+function outputFilename(name, changed, blob) {
   const base = name || 'file';
   const dot = base.lastIndexOf('.');
-  const stem = dot > 0 ? base.slice(0, dot) : base;
-  const ext  = dot > 0 ? base.slice(dot) : '';
-  return resized ? `${stem}-resized${ext}` : base;
+  let stem = dot > 0 ? base.slice(0, dot) : base;
+  let ext  = dot > 0 ? base.slice(dot) : '';
+
+  if (blob?.type === 'image/jpeg' && !/\.jpe?g$/i.test(ext)) ext = '.jpg';
+  if (blob?.type === 'image/png' && !/\.png$/i.test(ext)) ext = '.png';
+  if (blob?.type === 'application/pdf' && !/\.pdf$/i.test(ext)) ext = '.pdf';
+  if (blob?.type === DOCX_MIME && !/\.docx$/i.test(ext)) ext = '.docx';
+
+  return changed ? `${stem}-optimized${ext}` : (dot > 0 ? base : stem + ext);
+}
+
+function mimeForBlob(blob, filename) {
+  if (blob.type) return blob.type;
+  const n = (filename || '').toLowerCase();
+  if (/\.jpe?g$/.test(n)) return 'image/jpeg';
+  if (/\.png$/.test(n)) return 'image/png';
+  if (/\.gif$/.test(n)) return 'image/gif';
+  if (/\.webp$/.test(n)) return 'image/webp';
+  if (/\.pdf$/.test(n)) return 'application/pdf';
+  if (/\.docx$/.test(n)) return DOCX_MIME;
+  return 'application/octet-stream';
+}
+
+function blobAsFile(blob, filename) {
+  const name = filename || 'file';
+  return new File([blob], name, { type: mimeForBlob(blob, name) });
+}
+
+function canShareFile(blob, filename) {
+  if (!navigator.share || !navigator.canShare) return false;
+  try {
+    return navigator.canShare({ files: [blobAsFile(blob, filename)] });
+  } catch {
+    return false;
+  }
+}
+
+function isMobileDevice() {
+  return /iPhone|iPad|iPod|Android/i.test(navigator.userAgent)
+    || (navigator.maxTouchPoints > 0 && window.matchMedia('(pointer: coarse)').matches);
+}
+
+async function blobToPng(blob) {
+  if (blob.type === 'image/png') return blob;
+  const bitmap = await decodeImage(blob);
+  const canvas = document.createElement('canvas');
+  canvas.width = bitmap.width;
+  canvas.height = bitmap.height;
+  canvas.getContext('2d').drawImage(bitmap, 0, 0);
+  if (typeof bitmap.close === 'function') bitmap.close();
+  const png = await new Promise(r => canvas.toBlob(r, 'image/png'));
+  if (!png) throw new Error('Could not convert image for clipboard.');
+  return png;
+}
+
+async function writeClipboardItem(blobOrPromise) {
+  if (!navigator.clipboard?.write || typeof ClipboardItem === 'undefined') {
+    return { ok: false, reason: 'Clipboard not supported in this browser.' };
+  }
+  const data = blobOrPromise instanceof Blob
+    ? Promise.resolve(blobOrPromise)
+    : blobOrPromise;
+  try {
+    // Safari requires ClipboardItem values to be Promises, and the write call
+    // must happen in the same user-gesture turn — do not await conversion first.
+    await navigator.clipboard.write([
+      new ClipboardItem({ 'image/png': data }),
+    ]);
+    return { ok: true, method: 'clipboard' };
+  } catch (e) {
+    return { ok: false, reason: e?.message || 'Clipboard write blocked.', method: 'clipboard' };
+  }
+}
+
+async function shareFile(blob, filename, title) {
+  if (!canShareFile(blob, filename)) {
+    return { ok: false, reason: 'Share not available on this device.' };
+  }
+  try {
+    const file = blobAsFile(blob, filename);
+    await navigator.share({ files: [file], title: title || filename });
+    return { ok: true, method: 'share' };
+  } catch (e) {
+    if (e?.name === 'AbortError') return { ok: false, reason: 'Cancelled.' };
+    return { ok: false, reason: e?.message || 'Share failed.' };
+  }
+}
+
+async function writeBlobToClipboard(blob, filename) {
+  if (!blob.type.startsWith('image/') && !mimeForBlob(blob, filename).startsWith('image/')) {
+    return { ok: false, reason: 'Clipboard only supports images. Use Save / Share instead.' };
+  }
+
+  const pngPromise = blob.type === 'image/png' ? Promise.resolve(blob) : blobToPng(blob);
+  const clip = await writeClipboardItem(pngPromise);
+  if (clip.ok) return clip;
+
+  // iOS / Android: system share sheet is the reliable fallback.
+  const shared = await shareFile(blob, outputFilename(filename, true, blob), 'Optimized image');
+  if (shared.ok) return { ok: true, method: 'share', reason: 'Opened share sheet — save or copy from there.' };
+
+  return { ok: false, reason: clip.reason || 'Copy not supported here. Try Save / Share instead.' };
+}
+
+async function downloadBlob(blob, filename, changed = true) {
+  const name = outputFilename(filename, changed, blob);
+
+  if (isMobileDevice() && canShareFile(blob, name)) {
+    const shared = await shareFile(blob, name, 'Optimized file');
+    if (shared.ok) return shared;
+    if (shared.reason === 'Cancelled.') return shared;
+    return { ok: false, reason: shared.reason || 'Could not share file.' };
+  }
+
+  const url = URL.createObjectURL(blob);
+
+  if (isMobileDevice()) {
+    // Open synchronously (no prior await in this branch) so iOS allows the tab.
+    const tab = window.open(url, '_blank', 'noopener,noreferrer');
+    if (!tab) {
+      const a = document.createElement('a');
+      a.href = url;
+      a.target = '_blank';
+      a.rel = 'noopener noreferrer';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    }
+    setTimeout(() => URL.revokeObjectURL(url), 120000);
+    return {
+      ok: true,
+      method: 'tab',
+      reason: 'Tap Share in the new tab to save the file.',
+    };
+  }
+
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  a.rel = 'noopener';
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => {
+    a.remove();
+    URL.revokeObjectURL(url);
+  }, 5000);
+
+  return { ok: true, method: 'download' };
+}
+
+function feedbackLabel(res, successLabel, failLabel) {
+  if (res.ok) {
+    if (res.method === 'share') return 'Shared';
+    if (res.method === 'tab') return 'Opened';
+    return successLabel;
+  }
+  return res.reason === 'Cancelled.' ? failLabel : 'Failed';
+}
+
+function attachResultActions(actions, result) {
+  const isImage = result.kind === 'image';
+
+  if (isImage) {
+    const copyBtn = document.createElement('button');
+    copyBtn.className = 'status__btn status__btn--primary';
+    copyBtn.type = 'button';
+    copyBtn.textContent = isMobileDevice() ? 'Copy / Share' : 'Copy to clipboard';
+    copyBtn.addEventListener('click', async () => {
+      copyBtn.disabled = true;
+      const res = await writeBlobToClipboard(result.blob, result.filename);
+      copyBtn.textContent = feedbackLabel(res, 'Copied', 'Copy / Share');
+      if (!res.ok && res.reason) copyBtn.title = res.reason;
+      setTimeout(() => {
+        copyBtn.textContent = isMobileDevice() ? 'Copy / Share' : 'Copy to clipboard';
+        copyBtn.disabled = false;
+        copyBtn.title = '';
+      }, 2500);
+    });
+    actions.appendChild(copyBtn);
+  }
+
+  const saveLabel = isMobileDevice() ? 'Save / Share' : 'Download';
+  const dlBtn = document.createElement('button');
+  dlBtn.className = 'status__btn' + (isImage ? '' : ' status__btn--primary');
+  dlBtn.type = 'button';
+  dlBtn.textContent = saveLabel;
+  dlBtn.addEventListener('click', async () => {
+    dlBtn.disabled = true;
+    const res = await downloadBlob(result.blob, result.filename, result.changed);
+    dlBtn.textContent = feedbackLabel(res, 'Saved', saveLabel);
+    if (res.reason) dlBtn.title = res.reason;
+    setTimeout(() => {
+      dlBtn.textContent = saveLabel;
+      dlBtn.disabled = false;
+      dlBtn.title = '';
+    }, 2500);
+  });
+  actions.appendChild(dlBtn);
 }
 
 function setProgress(pct, detail) {
@@ -195,32 +391,10 @@ function hideProgress() {
   progressDetail.textContent = '';
 }
 
-async function writeBlobToClipboard(blob) {
-  if (!navigator.clipboard || typeof ClipboardItem === 'undefined') {
-    return { ok: false, reason: 'Clipboard not supported in this browser.' };
-  }
-  try {
-    await navigator.clipboard.write([new ClipboardItem({ [blob.type]: blob })]);
-    return { ok: true };
-  } catch (e) {
-    return { ok: false, reason: e?.message || 'Clipboard write blocked.' };
-  }
-}
-
-function downloadBlob(blob, filename) {
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(url), 5000);
-}
-
 // ── File type detection ──
 
 const HEIC_EXT = /\.(heic|heif)$/i;
 const HEIC_MIME = /^image\/hei[cf](?:-sequence)?$/i;
-const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 const MEDIA_RE  = /^word\/media\/.+\.(png|jpe?g|gif|webp|tiff?)$/i;
 
 function isHeicExtension(name) {
@@ -536,43 +710,16 @@ function renderResult(result) {
 
   const hintEl = document.createElement('span');
   hintEl.className = 'status__hint';
-  hintEl.textContent = result.kind === 'image'
-    ? 'Use Copy or Download below when you are ready.'
-    : 'Use Download below to save the file.';
+  hintEl.textContent = isMobileDevice()
+    ? (result.kind === 'image' ? 'Tap Copy / Share or Save / Share below.' : 'Tap Save / Share below.')
+    : (result.kind === 'image' ? 'Use Copy or Download below when you are ready.' : 'Use Download below to save the file.');
   msgWrap.appendChild(hintEl);
 
   row.appendChild(msgWrap);
 
   const actions = document.createElement('div');
   actions.className = 'status__actions';
-
-  if (result.kind === 'image') {
-    const copyBtn = document.createElement('button');
-    copyBtn.className = 'status__btn status__btn--primary';
-    copyBtn.type = 'button';
-    copyBtn.textContent = 'Copy to clipboard';
-    copyBtn.addEventListener('click', async () => {
-      const res = await writeBlobToClipboard(result.blob);
-      copyBtn.textContent = res.ok ? 'Copied' : 'Copy failed';
-      copyBtn.disabled = res.ok;
-      setTimeout(() => {
-        copyBtn.textContent = 'Copy to clipboard';
-        copyBtn.disabled = false;
-      }, 2000);
-    });
-    actions.appendChild(copyBtn);
-  }
-
-  const dlBtn = document.createElement('button');
-  dlBtn.className = 'status__btn' + (result.kind === 'image' ? '' : ' status__btn--primary');
-  dlBtn.type = 'button';
-  dlBtn.textContent = 'Download';
-  dlBtn.addEventListener('click', () => {
-    downloadBlob(result.blob, outputFilename(result.filename, result.changed));
-    dlBtn.textContent = 'Downloaded';
-    setTimeout(() => { dlBtn.textContent = 'Download'; }, 1500);
-  });
-  actions.appendChild(dlBtn);
+  attachResultActions(actions, result);
 
   row.appendChild(actions);
   statusEl.appendChild(row);
@@ -643,24 +790,25 @@ function renderHistory() {
       const copyBtn = document.createElement('button');
       copyBtn.type = 'button';
       copyBtn.className = 'history__btn';
-      copyBtn.textContent = 'Copy';
+      copyBtn.textContent = isMobileDevice() ? 'Share' : 'Copy';
       copyBtn.addEventListener('click', async (e) => {
         e.stopPropagation();
-        const res = await writeBlobToClipboard(h.blob);
-        copyBtn.textContent = res.ok ? 'Copied' : 'Failed';
+        const res = await writeBlobToClipboard(h.blob, h.filename);
+        copyBtn.textContent = feedbackLabel(res, 'Copied', isMobileDevice() ? 'Share' : 'Copy');
       });
       btns.appendChild(copyBtn);
     }
 
-    const dlBtn = document.createElement('button');
-    dlBtn.type = 'button';
-    dlBtn.className = 'history__btn';
-    dlBtn.textContent = 'Save';
-    dlBtn.addEventListener('click', (e) => {
+    const saveBtn = document.createElement('button');
+    saveBtn.type = 'button';
+    saveBtn.className = 'history__btn';
+    saveBtn.textContent = isMobileDevice() ? 'Save / Share' : 'Save';
+    saveBtn.addEventListener('click', async (e) => {
       e.stopPropagation();
-      downloadBlob(h.blob, outputFilename(h.filename, h.resized));
+      const res = await downloadBlob(h.blob, h.filename, h.changed);
+      saveBtn.textContent = feedbackLabel(res, 'Saved', 'Save');
     });
-    btns.appendChild(dlBtn);
+    btns.appendChild(saveBtn);
 
     item.appendChild(btns);
     historyEl.appendChild(item);
