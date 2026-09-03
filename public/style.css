@@ -413,6 +413,31 @@ kbd {
   font-size: 11px;
   margin-top: 6px;
 }
+.status__batch-list {
+  margin: 8px 0 0;
+  padding: 0 0 0 16px;
+  font-size: 11px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  max-height: 120px;
+  overflow-y: auto;
+}
+.status__batch-more {
+  color: var(--text-tertiary);
+  list-style: none;
+  margin-left: -16px;
+}
+.status__detail--warn {
+  display: block;
+  color: var(--error);
+  margin-top: 6px;
+}
+.status__actions--batch {
+  width: 100%;
+}
+.status__actions--batch .status__btn {
+  flex: 1;
+}
 .status__actions {
   display: flex;
   gap: 8px;
@@ -583,10 +608,10 @@ kbd {
   .subtitle-paste-desktop { display: none; }
   .status__actions {
     width: 100%;
-    flex-direction: column;
+    flex-direction: row;
   }
   .status__btn {
-    width: 100%;
+    flex: 1;
     text-align: center;
   }
   .status__row { flex-direction: column; }

@@ -1,4 +1,4 @@
-const HISTORY_LIMIT = 5;
+const HISTORY_LIMIT = 12;
 const STATS_POLL_MS = 15000;
 const DOCX_MIME = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
 
@@ -197,6 +197,7 @@ function mimeForBlob(blob, filename) {
   if (/\.webp$/.test(n)) return 'image/webp';
   if (/\.pdf$/.test(n)) return 'application/pdf';
   if (/\.docx$/.test(n)) return DOCX_MIME;
+  if (/\.zip$/.test(n)) return 'application/zip';
   return 'application/octet-stream';
 }
 
@@ -267,7 +268,7 @@ async function shareFile(blob, filename, title) {
 
 async function writeBlobToClipboard(blob, filename) {
   if (!blob.type.startsWith('image/') && !mimeForBlob(blob, filename).startsWith('image/')) {
-    return { ok: false, reason: 'Clipboard only supports images. Use Save / Share instead.' };
+    return { ok: false, reason: 'Clipboard only supports images. Use Save instead.' };
   }
 
   const pngPromise = blob.type === 'image/png' ? Promise.resolve(blob) : blobToPng(blob);
@@ -278,7 +279,7 @@ async function writeBlobToClipboard(blob, filename) {
   const shared = await shareFile(blob, outputFilename(filename, true, blob), 'Optimized image');
   if (shared.ok) return { ok: true, method: 'share', reason: 'Opened share sheet — save or copy from there.' };
 
-  return { ok: false, reason: clip.reason || 'Copy not supported here. Try Save / Share instead.' };
+  return { ok: false, reason: clip.reason || 'Copy not supported here. Try Save instead.' };
 }
 
 async function downloadBlob(blob, filename, changed = true) {
@@ -329,7 +330,6 @@ async function downloadBlob(blob, filename, changed = true) {
 
 function feedbackLabel(res, successLabel, failLabel) {
   if (res.ok) {
-    if (res.method === 'share') return 'Shared';
     if (res.method === 'tab') return 'Opened';
     return successLabel;
   }
@@ -343,14 +343,14 @@ function attachResultActions(actions, result) {
     const copyBtn = document.createElement('button');
     copyBtn.className = 'status__btn status__btn--primary';
     copyBtn.type = 'button';
-    copyBtn.textContent = isMobileDevice() ? 'Copy / Share' : 'Copy to clipboard';
+    copyBtn.textContent = isMobileDevice() ? 'Copy' : 'Copy to clipboard';
     copyBtn.addEventListener('click', async () => {
       copyBtn.disabled = true;
       const res = await writeBlobToClipboard(result.blob, result.filename);
-      copyBtn.textContent = feedbackLabel(res, 'Copied', 'Copy / Share');
+      copyBtn.textContent = feedbackLabel(res, 'Copied', 'Copy');
       if (!res.ok && res.reason) copyBtn.title = res.reason;
       setTimeout(() => {
-        copyBtn.textContent = isMobileDevice() ? 'Copy / Share' : 'Copy to clipboard';
+        copyBtn.textContent = isMobileDevice() ? 'Copy' : 'Copy to clipboard';
         copyBtn.disabled = false;
         copyBtn.title = '';
       }, 2500);
@@ -358,7 +358,7 @@ function attachResultActions(actions, result) {
     actions.appendChild(copyBtn);
   }
 
-  const saveLabel = isMobileDevice() ? 'Save / Share' : 'Download';
+  const saveLabel = isMobileDevice() ? 'Save' : 'Download';
   const dlBtn = document.createElement('button');
   dlBtn.className = 'status__btn' + (isImage ? '' : ' status__btn--primary');
   dlBtn.type = 'button';
@@ -375,6 +375,145 @@ function attachResultActions(actions, result) {
     }, 2500);
   });
   actions.appendChild(dlBtn);
+}
+
+function uniqueZipEntryName(filename, changed, blob, used) {
+  let name = outputFilename(filename, changed, blob);
+  if (!used.has(name)) {
+    used.add(name);
+    return name;
+  }
+  const dot = name.lastIndexOf('.');
+  const stem = dot > 0 ? name.slice(0, dot) : name;
+  const ext = dot > 0 ? name.slice(dot) : '';
+  let n = 2;
+  while (used.has(`${stem}-${n}${ext}`)) n += 1;
+  name = `${stem}-${n}${ext}`;
+  used.add(name);
+  return name;
+}
+
+async function buildBatchZip(results) {
+  if (typeof JSZip === 'undefined') {
+    throw new Error('ZIP support failed to load. Refresh and try again.');
+  }
+  const zip = new JSZip();
+  const used = new Set();
+  for (const r of results) {
+    zip.file(uniqueZipEntryName(r.filename, r.changed, r.blob, used), r.blob);
+  }
+  return zip.generateAsync({
+    type: 'blob',
+    compression: 'DEFLATE',
+    compressionOptions: { level: 6 },
+  });
+}
+
+function summarizeBatch(results) {
+  const origTotal = results.reduce((s, r) => s + r.origSize, 0);
+  const outTotal = results.reduce((s, r) => s + r.blob.size, 0);
+  const optimized = results.filter(r => r.changed).length;
+  const images = results.filter(r => r.kind === 'image').length;
+  const pdfs = results.filter(r => r.kind === 'pdf').length;
+  const docxs = results.filter(r => r.kind === 'docx').length;
+  const typeParts = [];
+  if (images) typeParts.push(`${images} image${images === 1 ? '' : 's'}`);
+  if (pdfs) typeParts.push(`${pdfs} PDF${pdfs === 1 ? '' : 's'}`);
+  if (docxs) typeParts.push(`${docxs} DOCX`);
+  return { origTotal, outTotal, optimized, typeParts };
+}
+
+function batchZipName() {
+  const d = new Date();
+  const stamp = [
+    d.getFullYear(),
+    String(d.getMonth() + 1).padStart(2, '0'),
+    String(d.getDate()).padStart(2, '0'),
+  ].join('-');
+  return `optimized-files-${stamp}.zip`;
+}
+
+function renderBatchResult(results, errors = []) {
+  clearStatus();
+  const { origTotal, outTotal, optimized, typeParts } = summarizeBatch(results);
+  const n = results.length;
+
+  const row = document.createElement('div');
+  row.className = 'status__row status__row--ok';
+
+  const msgWrap = document.createElement('div');
+  msgWrap.className = 'status__msg';
+
+  const titleEl = document.createElement('span');
+  titleEl.className = 'status__title';
+  titleEl.textContent = `${n} files ready — save as one ZIP`;
+  msgWrap.appendChild(titleEl);
+
+  const detailEl = document.createElement('span');
+  detailEl.className = 'status__detail';
+  detailEl.textContent = `${typeParts.join(' · ')} · ${fmtBytes(origTotal)} → ${fmtBytes(outTotal)}`
+    + (optimized ? ` · ${optimized} optimized` : '');
+  msgWrap.appendChild(detailEl);
+
+  const listEl = document.createElement('ul');
+  listEl.className = 'status__batch-list';
+  for (const r of results.slice(0, 8)) {
+    const li = document.createElement('li');
+    li.textContent = outputFilename(r.filename, r.changed, r.blob);
+    listEl.appendChild(li);
+  }
+  if (results.length > 8) {
+    const li = document.createElement('li');
+    li.className = 'status__batch-more';
+    li.textContent = `+ ${results.length - 8} more`;
+    listEl.appendChild(li);
+  }
+  msgWrap.appendChild(listEl);
+
+  const hintEl = document.createElement('span');
+  hintEl.className = 'status__hint';
+  hintEl.textContent = isMobileDevice()
+    ? 'Tap Save all for one ZIP file. Use Recent for individual Copy or Save.'
+    : 'Download one ZIP with every file, or use Recent for individual Copy / Download.';
+  msgWrap.appendChild(hintEl);
+
+  if (errors.length) {
+    const errEl = document.createElement('span');
+    errEl.className = 'status__detail status__detail--warn';
+    errEl.textContent = `${errors.length} file${errors.length === 1 ? '' : 's'} skipped: ${errors.map(e => e.name).join(', ')}`;
+    msgWrap.appendChild(errEl);
+  }
+
+  row.appendChild(msgWrap);
+
+  const actions = document.createElement('div');
+  actions.className = 'status__actions status__actions--batch';
+  const zipLabel = isMobileDevice() ? 'Save all' : 'Save all as ZIP';
+  const zipBtn = document.createElement('button');
+  zipBtn.className = 'status__btn status__btn--primary';
+  zipBtn.type = 'button';
+  zipBtn.textContent = zipLabel;
+  zipBtn.addEventListener('click', async () => {
+    zipBtn.disabled = true;
+    zipBtn.textContent = 'Building…';
+    try {
+      const zipBlob = await buildBatchZip(results);
+      const res = await downloadBlob(zipBlob, batchZipName(), false);
+      zipBtn.textContent = feedbackLabel(res, 'Saved', zipLabel);
+      if (res.reason) zipBtn.title = res.reason;
+    } catch (e) {
+      zipBtn.textContent = 'Failed';
+      zipBtn.title = e?.message || 'Could not build ZIP.';
+    }
+    setTimeout(() => {
+      zipBtn.textContent = zipLabel;
+      zipBtn.disabled = false;
+      zipBtn.title = '';
+    }, 2500);
+  });
+  actions.appendChild(zipBtn);
+  row.appendChild(actions);
+  statusEl.appendChild(row);
 }
 
 function setProgress(pct, detail) {
@@ -711,7 +850,7 @@ function renderResult(result) {
   const hintEl = document.createElement('span');
   hintEl.className = 'status__hint';
   hintEl.textContent = isMobileDevice()
-    ? (result.kind === 'image' ? 'Tap Copy / Share or Save / Share below.' : 'Tap Save / Share below.')
+    ? (result.kind === 'image' ? 'Tap Copy or Save below.' : 'Tap Save below.')
     : (result.kind === 'image' ? 'Use Copy or Download below when you are ready.' : 'Use Download below to save the file.');
   msgWrap.appendChild(hintEl);
 
@@ -727,6 +866,10 @@ function renderResult(result) {
 
 function renderError(title, detail) {
   clearStatus();
+  appendErrorRow(title, detail);
+}
+
+function appendErrorRow(title, detail) {
   const row = document.createElement('div');
   row.className = 'status__row status__row--err';
   const msgWrap = document.createElement('div');
@@ -790,11 +933,11 @@ function renderHistory() {
       const copyBtn = document.createElement('button');
       copyBtn.type = 'button';
       copyBtn.className = 'history__btn';
-      copyBtn.textContent = isMobileDevice() ? 'Share' : 'Copy';
+      copyBtn.textContent = 'Copy';
       copyBtn.addEventListener('click', async (e) => {
         e.stopPropagation();
         const res = await writeBlobToClipboard(h.blob, h.filename);
-        copyBtn.textContent = feedbackLabel(res, 'Copied', isMobileDevice() ? 'Share' : 'Copy');
+        copyBtn.textContent = feedbackLabel(res, 'Copied', 'Copy');
       });
       btns.appendChild(copyBtn);
     }
@@ -802,7 +945,7 @@ function renderHistory() {
     const saveBtn = document.createElement('button');
     saveBtn.type = 'button';
     saveBtn.className = 'history__btn';
-    saveBtn.textContent = isMobileDevice() ? 'Save / Share' : 'Save';
+    saveBtn.textContent = 'Save';
     saveBtn.addEventListener('click', async (e) => {
       e.stopPropagation();
       const res = await downloadBlob(h.blob, h.filename, h.changed);
@@ -815,41 +958,59 @@ function renderHistory() {
   });
 }
 
-async function processFile(file) {
+async function processFileCore(file, onProgress) {
   const kind = getFileKind(file);
   if (!kind) throw new Error(`Unsupported file type (${file.type || file.name}).`);
+  if (kind === 'image') return resizeImageFile(file, onProgress);
+  if (kind === 'pdf') return resizePdfFile(file, onProgress);
+  return resizeDocxFile(file, onProgress);
+}
 
-  dropzone.classList.add('dropzone--busy');
-  setProgress(0, 'Starting…');
-
-  try {
-    let result;
-    if (kind === 'image') result = await resizeImageFile(file, setProgress);
-    else if (kind === 'pdf') result = await resizePdfFile(file, setProgress);
-    else result = await resizeDocxFile(file, setProgress);
-
-    setProgress(1, 'Complete.');
-    recordStats(result);
-    renderResult(result);
-
-    const historyEntry = { ...result };
-    if (kind === 'image') {
-      historyEntry.thumbUrl = URL.createObjectURL(result.blob);
-    }
-    pushHistory(historyEntry);
-  } catch (e) {
-    renderError('Could not process file', e?.message || String(e));
-  } finally {
-    hideProgress();
-    dropzone.classList.remove('dropzone--busy');
+function addToHistory(result) {
+  const historyEntry = { ...result };
+  if (result.kind === 'image') {
+    historyEntry.thumbUrl = URL.createObjectURL(result.blob);
   }
+  pushHistory(historyEntry);
 }
 
 async function processFiles(files) {
   const supported = files.filter(isSupportedFile);
   if (supported.length === 0) return;
-  for (const f of supported) {
-    await processFile(f);
+
+  dropzone.classList.add('dropzone--busy');
+  const batch = [];
+  const errors = [];
+
+  for (let i = 0; i < supported.length; i++) {
+    const file = supported[i];
+    const batchLabel = `File ${i + 1} of ${supported.length}`;
+    try {
+      const result = await processFileCore(file, (pct, detail) => {
+        const overall = (i + Math.min(1, Math.max(0, pct))) / supported.length;
+        setProgress(overall, detail ? `${batchLabel} · ${detail}` : batchLabel);
+      });
+      setProgress((i + 1) / supported.length, `${batchLabel} · complete`);
+      recordStats(result);
+      batch.push(result);
+      addToHistory(result);
+    } catch (e) {
+      errors.push({ name: file.name, message: e?.message || String(e) });
+    }
+  }
+
+  hideProgress();
+  dropzone.classList.remove('dropzone--busy');
+
+  if (batch.length >= 2) {
+    renderBatchResult(batch, errors);
+  } else if (batch.length === 1) {
+    renderResult(batch[0]);
+    if (errors.length) {
+      appendErrorRow('Some files skipped', errors.map(e => `${e.name}: ${e.message}`).join(' · '));
+    }
+  } else if (errors.length) {
+    renderError('Could not process files', errors.map(e => `${e.name}: ${e.message}`).join(' · '));
   }
 }
 
